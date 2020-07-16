@@ -18,20 +18,18 @@ namespace Noot.EntityFramework.Models
         public static ColumnDefinition Construct(SqlDataReader Reader)
         {
             if (Reader == null) throw new ArgumentNullException(nameof(Reader));
-            var result = new ColumnDefinition()
-            {
-                Name = Reader.GetString(Reader.GetOrdinal(nameof(ColumnDefinition.Name))),
-                DataType = Reader.GetString(Reader.GetOrdinal(nameof(ColumnDefinition.DataType))),
-                ForeignTable = Reader.IsDBNull(Reader.GetOrdinal(nameof(ColumnDefinition.ForeignTable))) 
-                            ? string.Empty 
-                            : Reader.GetString(Reader.GetOrdinal(nameof(ColumnDefinition.ForeignTable))),
-                IsIdentity = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsIdentity))),
-                IsPrimary = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsPrimary))),
-                IsNullable = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsNullable))),
-                MaxLength = Reader.GetInt32(Reader.GetOrdinal(nameof(ColumnDefinition.MaxLength))),
-                Precision = Reader.GetInt32(Reader.GetOrdinal(nameof(ColumnDefinition.Precision))),
-                Scale = Reader.GetInt32(Reader.GetOrdinal(nameof(ColumnDefinition.Scale))),
-            };
+            var result = new ColumnDefinition();
+            
+                result.Name = Reader.GetString(Reader.GetOrdinal(nameof(ColumnDefinition.Name)));
+                result.DataType = Reader.GetString(Reader.GetOrdinal(nameof(ColumnDefinition.DataType)));
+                
+                result.IsIdentity = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsIdentity)));
+                result.IsPrimary = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsPrimary)));
+                result.IsNullable = Reader.GetBoolean(Reader.GetOrdinal(nameof(ColumnDefinition.IsNullable)));
+                result.MaxLength = Reader.GetInt16(Reader.GetOrdinal(nameof(ColumnDefinition.MaxLength)));
+                result.Precision = Reader.GetByte(Reader.GetOrdinal(nameof(ColumnDefinition.Precision)));
+                result.Scale = Reader.GetByte(Reader.GetOrdinal(nameof(ColumnDefinition.Scale)));
+            
             return result;
         }
     }
