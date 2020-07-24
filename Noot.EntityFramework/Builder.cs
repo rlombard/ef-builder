@@ -49,7 +49,7 @@ namespace Noot.EntityFramework
                 {
                     while (reader.Read())
                     {
-                        result.Add(TableDefinition.Construct(reader));
+                        result.Add(TableDefinition.Construct(_ConnectionString, reader));
                     }
                 }
 
@@ -79,7 +79,7 @@ namespace Noot.EntityFramework
                 {
                     while (reader.Read())
                     {
-                        result = TableDefinition.Construct(reader);
+                        result = TableDefinition.Construct(_ConnectionString, reader);
                     }
                 }
 
@@ -87,116 +87,7 @@ namespace Noot.EntityFramework
             }                    
         }
 
-        public List<ColumnDefinition> GetColumns(TableDefinition Table)
-        {
-            var result = new List<ColumnDefinition>();
-            const string query = "select * from ( " +            
-                                 "select c.Column_id, " +
-                                 " c.name as [Name], " +
-                                 " t.Name as [DataType], " +
-                                 " c.max_length as [MaxLength], " + 
-                                 " c.precision as [Precision],  " +
-                                 " c.scale as [Scale], " +
-                                 " c.is_nullable as [IsNullable], " +
-                                 " ISNULL(i.is_primary_key, 0) as [IsPrimary], " +
-                                 " c.is_identity as [IsIdentity]," +
-                                 //" f.constraint_column_id as [ForeignTable], " +
-                                 //"  left outer join sys.foreign_key_columns f "+
-                                // " on c.object_id = f.parent_object_id and c.column_id = f.parent_column_id " +
-                                 " ROW_NUMBER() OVER (PARTITION BY c.Name ORDER BY c.Column_id) AS RowNumber " +
-                                 " from sys.columns c " +
-                                 " inner join sys.types t " +
-                                 " on c.user_type_id = t.user_type_id " +
-                                 " left outer join sys.index_columns ic " +
-                                 " on ic.object_id = c.object_id and ic.column_id = c.column_id " +
-                                 " left outer join sys.indexes i " +
-                                 " on ic.object_id = i.object_id and ic.index_id = i.index_id " +                                
-                                 " where  c.object_id = @TableID " +
-                                 ") as a where a.RowNumber = 1 " +
-                                 " order by a.Column_id " ;
-
-            using (var connection = new SqlConnection(_ConnectionString))
-            using (var command = new SqlCommand(query, connection))
-            {
-                connection.Open();
-                command.Parameters.AddWithValue("@TableID", Table.ID);
-
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        result.Add(ColumnDefinition.Construct(reader));
-                    }
-                }                
-            }   
-            
-            GetForeignKeys(ref result, Table.Name, Table.Schema);
-            result.AddRange(GetLocalKeys(Table.Name, Table.Schema));
-            return result;        
-        }
-
-        public List<ColumnDefinition> GetForeignKeys(ref List<ColumnDefinition> result, string TableName, string Schema)
-        {
-            var query = $"EXEC sp_fkeys @fktable_name = '{TableName}', @fktable_owner = '{Schema}'" ;
-
-            using (var connection = new SqlConnection(_ConnectionString))
-            using (var command = new SqlCommand(query, connection))
-            {
-                connection.Open();
-
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        var column = new ColumnDefinition()
-                        {
-                            DataType = "relationship",
-                            ForeignTable = reader.GetString(reader.GetOrdinal("PKTABLE_NAME")),
-                            Name = reader.GetString(reader.GetOrdinal("FKCOLUMN_NAME"))
-                        };
-
-                        var item = result.FirstOrDefault(x => x.Name.Equals(column.Name));
-                        if(item != null)
-                        {
-                            item.ForeignTable = column.ForeignTable;
-                        }
-                    }
-                }
-
-                return result;
-            }  
-        }
-
-        public List<ColumnDefinition> GetLocalKeys(string TableName, string Schema)
-        {
-            var result = new List<ColumnDefinition>();
-            var query = $"EXEC sp_fkeys @pktable_name = '{TableName}', @pktable_owner = '{Schema}'" ;
-
-            using (var connection = new SqlConnection(_ConnectionString))
-            using (var command = new SqlCommand(query, connection))
-            {
-                connection.Open();
-
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        var column = new ColumnDefinition()
-                        {
-                            DataType = "collection",
-                            ForeignTable = reader.GetString(reader.GetOrdinal("FKTABLE_NAME")),
-                            Name = reader.GetString(reader.GetOrdinal("PKCOLUMN_NAME"))
-                        };
-
-                        if(!result.Any(x => x.Name.Equals(column.Name))) result.Add(column);
-                    }
-                }
-
-                return result;
-            }  
-        }
-
-        public string CreateDatabaseContext(string Namespace, string ContextName, string ModelNamespace, string Schema = "")
+        public string CreateDatabaseContext(string Namespace, string ContextName, string ModelNamespace, string Schema = "", string IdentificationTag = "ID")
         {
             var tables = GetTableDefinitions(Schema);
 
@@ -206,7 +97,7 @@ namespace Noot.EntityFramework
             result.AppendLine(string.Empty);                
             result.AppendLine($"namespace {Namespace}");
             result.AppendLine(("{").Indent(0));
-            result.AppendLine(($"public class {ContextName} : DbContext").Indent(1));
+            result.AppendLine(($"public partial class {ContextName} : DbContext").Indent(1));
             result.AppendLine(("{").Indent(1));
 
             result.AppendLine(($"public {ContextName}() : base()").Indent(2));
@@ -219,17 +110,91 @@ namespace Noot.EntityFramework
             result.AppendLine(("}").Indent(2));
             result.AppendLine(string.Empty); 
 
+            foreach (var table in tables)
+            {
+                result.AppendLine(($"public DbSet<{table.Name}> {table.Name.Pluralize()} " + " { get; set; }").Indent(2));
+            }
+
             result.AppendLine(("protected override void OnConfiguring(DbContextOptionsBuilder OptionsBuilder)").Indent(2));
             result.AppendLine(("{").Indent(2));
             result.AppendLine(($"OptionsBuilder.UseSqlServer(@\"{_ConnectionString}\");").Indent(3));
             result.AppendLine(("}").Indent(2));
             result.AppendLine(string.Empty); 
 
-
+            result.AppendLine(("protected override void OnModelCreating(ModelBuilder ModelBuilder)").Indent(2));
+            result.AppendLine(("{").Indent(2));
+            
             foreach (var table in tables)
             {
-                result.AppendLine(($"public DbSet<{table.Name}> {table.Name.Pluralize()} " + " { get; set; }").Indent(2));
+                if (!table.HasKey && !table.ForeignKeys.Any() && !table.TableIndices.Any() && !table.DefaultColumns.Any()) 
+                {
+                    result.AppendLine(($"ModelBuilder.Entity<{table.Name}>(entity =>").Indent(3));
+                    result.AppendLine(("{").Indent(3));
+                    result.AppendLine(("entity.HasNoKey();").Indent(4));
+                    result.AppendLine(("});").Indent(3)); 
+                    result.AppendLine(string.Empty);                    
+                }
+                else
+                {
+                    result.AppendLine(($"ModelBuilder.Entity<{table.Name}>(entity =>").Indent(3));
+                    result.AppendLine(("{").Indent(3));
+                    if (table.TableIndices.Any())
+                    {
+                        foreach (var index in table.TableIndices)
+                        {
+                            if (index.Name.ToLowerInvariant().Contains("materialized")) continue;
+
+                            result.AppendLine(("entity.HasIndex(e => new { "+ index.Columns +" })").Indent(4));                           
+                            if (index.IsUnique)
+                            {
+                                result.AppendLine(($".HasName(\"{index.Name}\")").Indent(5));
+                                result.AppendLine((".IsUnique();").Indent(5));
+                            }
+                            else
+                            {
+                                result.AppendLine(($".HasName(\"{index.Name}\");").Indent(5));
+                            }
+                        }  
+                        result.AppendLine(string.Empty);                      
+                    }
+
+                    if (table.ForeignKeys.Any())
+                    {
+                        foreach (var foreignKey in table.ForeignKeys)
+                        {
+                            var column = table.Columns.FirstOrDefault(x => x.HasForeignKey && x.ForeignTable.Equals(foreignKey.HasOne));
+                            var hasOne = foreignKey.HasOne;
+                            if (column != null)
+                            {
+                                hasOne = column.Name.Replace(IdentificationTag, "");
+                            }
+
+                            result.AppendLine(($"entity.HasOne(d => d.{hasOne})").Indent(4));                           
+                            result.AppendLine(($".WithMany(p => p.{foreignKey.WithMany.Pluralize()})").Indent(5));
+                            result.AppendLine(($".HasForeignKey(d => d.{foreignKey.HasForeignKey})").Indent(5));
+                            result.AppendLine(($".HasConstraintName(\"{foreignKey.HasConstraintName}\");").Indent(5));                            
+                        }  
+                        result.AppendLine(string.Empty);   
+                    }
+
+                    if (table.DefaultColumns.Any())
+                    {
+                        foreach (var defaultColumn in table.DefaultColumns)
+                        {
+                            result.AppendLine(($"entity.Property(e => e.{defaultColumn.ColumnName}).HasDefaultValueSql(\"{defaultColumn.Value}\");").Indent(4));                           
+                        } 
+                        result.AppendLine(string.Empty);    
+                    }
+
+                    result.AppendLine(("});").Indent(3));
+                }
+
+                result.AppendLine(string.Empty); 
             }
+
+            result.AppendLine(("}").Indent(2));
+            result.AppendLine(string.Empty); 
+            result.AppendLine(("partial void OnModelCreatingPartial(ModelBuilder modelBuilder);").Indent(2));
             result.AppendLine(("}").Indent(1));
             result.AppendLine(("}").Indent(0));
             return result.ToString();
@@ -242,42 +207,37 @@ namespace Noot.EntityFramework
 
             foreach (var table in tables)
             {   
-                var (model, file) = CreateModel(table, Namespace, IdentificationTag, BaseClass);
+                var (model, file) = CreateModel(table, tables, Namespace, IdentificationTag, BaseClass);
                 models.Add(new KeyValuePair<string,string>(model, file));       
             }
           
             return models;          
         }
     
-        public (string, string) CreateModel(string TableName, string Namespace, string IdentificationTag = "ID", string BaseClass = "")
+        public (string, string) CreateModel(TableDefinition Table, List<TableDefinition> AllTables, string Namespace, string IdentificationTag = "ID", string BaseClass = "")
         {
-            var table = GetTableDefinition(TableName);
-            if (table == null) throw new Exception("Table does not exist in database");
+            var columns = Table.Columns;
+            var fks = AllTables.Where(t => t.ForeignKeys.Any(fk => fk.HasOne.Equals(Table.Name)))
+            .SelectMany(t => t.ForeignKeys).GroupBy(x => x.WithMany).Select(x => x.First())
+            .ToList();
 
-            return CreateModel(table, Namespace, IdentificationTag, BaseClass);   
-        }
-
-        public (string, string) CreateModel(TableDefinition Table, string Namespace, string IdentificationTag = "ID", string BaseClass = "")
-        {
-            var columns = GetColumns(Table);
-            if(!columns.Any(x => x.IsPrimary)) return (string.Empty, string.Empty);
             var result = new StringBuilder();     
 
-            if (columns.Any(x => !string.IsNullOrEmpty(x.ForeignTable)))
+            if (fks.Any())
             {
                 result.AppendLine("using System.Collections.Generic;");
             }  
             
             result.AppendLine("using System;");
             result.AppendLine("using System.ComponentModel.DataAnnotations;");
-            result.AppendLine("using System.Diagnostics;");
             result.AppendLine("using System.ComponentModel.DataAnnotations.Schema;");
+            result.AppendLine("using System.Diagnostics;");          
 
             result.AppendLine(string.Empty);                
             result.AppendLine($"namespace {Namespace}");
             result.AppendLine(("{").Indent(0));
             
-            var primaryColumn = columns.FirstOrDefault(x => x.IsPrimary);
+            var primaryColumn = columns.FirstOrDefault(x => x.IsKey);
             if (primaryColumn != null)
             {
                 result.AppendLine(($"[DebuggerDisplay(\"{primaryColumn.Name} = " + "{" + primaryColumn.Name + "}\")]").Indent(1));
@@ -287,60 +247,55 @@ namespace Noot.EntityFramework
 
             if (string.IsNullOrEmpty(BaseClass))
             {
-                result.AppendLine(($"public class {Table.Name}").Indent(1));
+                result.AppendLine(($"public partial class {Table.Name}").Indent(1));
             }
             else
             {
-                result.AppendLine(($"public class {Table.Name} : {BaseClass}").Indent(1));
+                result.AppendLine(($"public partial class {Table.Name} : {BaseClass}").Indent(1));
             }
-
             
             result.AppendLine(("{").Indent(1));
-            
-            
-            foreach (var column in columns)
+      
+            result.AppendLine(($"public {Table.Name}()").Indent(2));
+            result.AppendLine(("{").Indent(2));
+            foreach (var collection in fks)
             {
-               
+                result.AppendLine(($"{collection.WithMany.Pluralize()} = new HashSet<{collection.WithMany}>();").Indent(3));
+            }
+            result.AppendLine(("}").Indent(2));
+                        
+            foreach (var column in columns)
+            {               
                 var dataType = column.DataType.DataType(column.IsNullable);
-                if (!string.IsNullOrEmpty(dataType) && !dataType.Equals("relationship") && !dataType.Equals("collection"))
+                if (!string.IsNullOrEmpty(dataType))
                 {
-                    var key = column.Name.DecorateKey(column.IsPrimary);
-                    var required = column.Name.DecorateRequired(column.IsNullable, column.IsPrimary, column.IsIdentity);
-                    var range = column.Name.DecorateRange(column.DataType);
-                    var length = column.Name.DecorateLength(column.MaxLength);
+                    var key = column.Name.DecorateKey(column.IsKey);
+                    var required = column.Name.DecorateRequired(column.IsNullable, column.IsKey);
+                    var range = column.Name.DecorateRange(dataType, column.IsKey);
+                    var length = column.Name.DecorateLength(column.MaxLength, dataType);
 
                     if (!string.IsNullOrEmpty(key)) result.AppendLine(key.Indent(2));
                     if (!string.IsNullOrEmpty(required)) result.AppendLine(required.Indent(2));
                     if (!string.IsNullOrEmpty(range)) result.AppendLine(range.Indent(2));
                     if (!string.IsNullOrEmpty(length)) result.AppendLine(length.Indent(2));
-                
-                    result.AppendLine(($"public {dataType} {column.Name} " + " { get; set; }").Indent(2));
+
+                    result.AppendLine(($"public {dataType} {column.Name}" + " { get; set; }").Indent(2));
+
+                    if(column.HasForeignKey)
+                    {
+                        result.AppendLine(string.Empty); 
+                        result.AppendLine(($"[ForeignKey(nameof({column.Name}))]").Indent(2));                        
+                        result.AppendLine(($"public virtual {column.ForeignTable} {column.Name.Replace(IdentificationTag, "")}" + " { get; set; }").Indent(2));
+                    }
+                   
                     result.AppendLine(string.Empty); 
-                }
-                
-                if (dataType.Equals("collection"))
-                {
-                    var property = column.Name.Replace(IdentificationTag, string.Empty).Pluralize();
-                    
-                    if(!property.Equals(Table.Name) && property.Contains(column.ForeignTable)) 
-                    {
-                        result.AppendLine(($"[InverseProperty(nameof({column.Name}))]").Indent(2));
-                        result.AppendLine(($"public virtual List<{column.ForeignTable}> {property} " + " { get; } = new List<"+ $"{column.ForeignTable}>();").Indent(2));
-                        result.AppendLine(string.Empty); 
-                    }
-                }
+                }                                
+            }
 
-                if (!string.IsNullOrEmpty(column.ForeignTable) )
-                {
-                    var property = column.Name.Replace(IdentificationTag, string.Empty).Singularize();
-
-                    if(!property.Equals(Table.Name) && property.Contains(column.ForeignTable))
-                    {
-                        result.AppendLine(($"[ForeignKey(nameof({column.Name}))]").Indent(2));
-                        result.AppendLine(($"public virtual {column.ForeignTable} {property} " + " { get; set; }").Indent(2));
-                        result.AppendLine(string.Empty); 
-                    }
-                }
+            foreach (var foreignKey in fks)
+            {
+                result.AppendLine(($"public virtual ICollection<{foreignKey.WithMany}> {foreignKey.WithMany.Pluralize()}" + " { get; set; }").Indent(2));
+                result.AppendLine(string.Empty); 
             }
                             
             result.AppendLine(("}").Indent(1));
@@ -354,7 +309,7 @@ namespace Noot.EntityFramework
         {
             if (OutputContext)
             {
-                var context = CreateDatabaseContext($"{BaseNamespace}.{ContextNamespace}", ContextName, $"{BaseNamespace}.{ModelNamespace}", Schema);
+                var context = CreateDatabaseContext($"{BaseNamespace}.{ContextNamespace}", ContextName, $"{BaseNamespace}.{ModelNamespace}", Schema, IdentificationTag);
                 var contextDirectory = ContextPath.Directory();
                 var contextFile = $"{contextDirectory}{ContextName}.cs";
 

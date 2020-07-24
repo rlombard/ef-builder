@@ -43,9 +43,9 @@ namespace Noot.EntityFramework.Extensions
             }           
         }
 
-        public static string DecorateLength(this string field, int MaxLength)
+        public static string DecorateLength(this string field, int MaxLength, string DataType)
         {         
-            return MaxLength > 0 ? $"[StringLength({MaxLength}, ErrorMessage = \"{field.Humanize()} cannot exceed more than {MaxLength} characters.\")]" : string.Empty;
+            return !DataType.ToLowerInvariant().Equals("string") ? string.Empty : MaxLength > 0 ? $"[StringLength({MaxLength}, ErrorMessage = \"{field.Humanize()} cannot exceed more than {MaxLength} characters.\")]" : string.Empty;
         }
 
         public static string DecorateKey(this string field, bool IsIdentity)
@@ -53,14 +53,14 @@ namespace Noot.EntityFramework.Extensions
             return IsIdentity ? "[Key]" : string.Empty;
         }
 
-        public static string DecorateRequired(this string field, bool IsNullable, bool IsPrimary, bool IsIdentity)
+        public static string DecorateRequired(this string field, bool IsNullable, bool IsKey)
         {    
-            return !IsNullable && (!IsIdentity || !IsPrimary) ? ($"[Required(ErrorMessage = \"{field.Humanize()} is a required field.\")]") : string.Empty;
+            return !IsNullable && !IsKey ? ($"[Required(ErrorMessage = \"{field.Humanize()} is a required field.\")]") : string.Empty;
         }
 
-        public static string DecorateRange(this string field, string DataType)
+        public static string DecorateRange(this string field, string DataType, bool IsKey)
         {
-            return  DataType.ToLowerInvariant() == "int" ? $"[Range(1, 99999999, ErrorMessage = \"Value for {field.Humanize()} must be greater than 0.\")]" : string.Empty;
+            return  DataType.ToLowerInvariant() == "int" && !IsKey ? $"[Range(1, 99999999, ErrorMessage = \"Value for {field.Humanize()} must be greater than 0.\")]" : string.Empty;
         }
 
         public static string Directory(this string Path)
